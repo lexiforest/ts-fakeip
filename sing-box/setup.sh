@@ -29,20 +29,29 @@ iptables -t mangle -A PREROUTING \
     -m socket \
     -j DIVERT
 
-# 3b. In DIVERT chain: mark packet and ACCEPT so it gets routed
-iptables -t mangle -A DIVERT \
-    -j MARK --set-mark 1
-iptables -t mangle -A DIVERT \
-    -j ACCEPT
+# 3b. Likewise for UDP packets
+iptables -t mangle -A PREROUTING \
+    -p udp \
+    -d 198.18.0.0/15 \
+    -m socket \
+    -j DIVERT
 
-# 4. TPROXY rule: mark **all other** TCP PREROUTING packets to 198.18.0.0/15
+# 3c. In DIVERT chain: mark packet and ACCEPT so it gets routed
+iptables -t mangle -A DIVERT  -j MARK --set-mark 1
+iptables -t mangle -A DIVERT  -j ACCEPT
+
+# 4. TPROXY rule: mark **all other** TCP/UDP PREROUTING packets to 198.18.0.0/15
 #    and send them to local port 7893
 echo "Adding TPROXY rule for 198.18.0.0/15 → port 7893..."
 iptables -t mangle -A PREROUTING \
     -p tcp \
     -d 198.18.0.0/15 \
-    -j TPROXY \
-        --tproxy-mark 0x1/0x1 \
-        --on-port 7893
+    -j TPROXY --tproxy-mark 0x1/0x1 --on-port 7893
 
-echo "Setup complete. Only TCP → 198.18.0.0/15 will be transparently proxied on port 7893."
+iptables -t mangle -A PREROUTING \
+    -p udp \
+    -d 198.18.0.0/15 \
+    -j TPROXY --tproxy-mark 0x1/0x1 --on-port 7893
+
+
+echo "Setup complete. TCP/UDP → 198.18.0.0/15 will be transparently proxied on port 7893."

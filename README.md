@@ -29,7 +29,7 @@ In my setup, I leveraged singbox’s built-in DNS (instead of the more popular m
 
 ### Step 1. Buy a VPS server
 
-Spin up a VPS server and join the tailnet.
+Spin up a VPS server and join the tailnet. **NOTE**, allow all addresses to connect UDP in the security group.
 
 ### Step 2. Install Singbox
 

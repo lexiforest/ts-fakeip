@@ -15,11 +15,12 @@ sysctl -w net.ipv4.ip_forward=0
 echo "Flushing mangle PREROUTING chain..."
 iptables -t mangle -F PREROUTING
 
+# 3. Remove DIVERT
 echo "Removing DIVERT chain..."
 iptables -t mangle -F DIVERT
 iptables -t mangle -X DIVERT
 
-# 3. Remove policy routing entries (table 100)
+# 4. Remove policy routing entries (table 100)
 echo "Removing policy routing entries..."
 ip rule del fwmark 1 lookup 100 2>/dev/null || true
 ip route del local 0.0.0.0/0 dev lo table 100 2>/dev/null || true
