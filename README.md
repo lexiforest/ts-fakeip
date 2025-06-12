@@ -233,6 +233,84 @@ ExecStopPost  = +/usr/bin/bash /etc/sing-box/unset.sh
 
 Warning: Never add these iptables scripts to system boot, otherwise a miss-config could trap you into a reboot loop.
 
+### (Optional) Step 6. Set up a DERP server
+
+Tailscale uses DERP server for hole-punching and traffic-relaying when a direct connect between two peers is not possible.
+However, the DERP server may be too slow or blocked in your region. To overcome this, you can setup you own DERP servers.
+
+On a new host, let's say: `derp.example.com(10.10.10.10)`
+
+```sh
+go install tailscale.com/cmd/derper@latest
+
+# If golang is blocked, set this:
+go env -w  GOPROXY=https://goproxy.io,direct
+
+sudo derper --hostname=derp.example.com
+```
+
+Edit the ACL file on tailscale.com
+
+```json
+{
+  // ... other parts of tailnet policy file
+  "derpMap": {
+    "Regions": {
+        // disable all default derp server.
+        "1":  null,
+        "10": null,
+        "11": null,
+        "12": null,
+        "13": null,
+        "14": null,
+        "15": null,
+        "16": null,
+        "17": null,
+        "18": null,
+        "19": null,
+        "2":  null,
+        "20": null,
+        "21": null,
+        "22": null,
+        "23": null,
+        "24": null,
+        "25": null,
+        "26": null,
+        "27": null,
+        "28": null,
+        "3":  null,
+        "4":  null,
+        "5":  null,
+        "6":  null,
+        "7":  null,
+        "8":  null,
+        "9":  null,
+
+      // enable custom server
+      "900": {
+        "RegionID": 900,
+        "RegionCode": "myderp",
+        "Nodes": [
+          {
+            "Name": "1",
+            "RegionID": 900,
+            "HostName": "derp.example.com",
+            // IPv4 and IPv6 are optional, but recommended, to reduce
+            // potential DERP connectivity issues if DNS is unavailable
+            // or having issues. Addresses must be publicly routable
+            // and not in private IP ranges.
+            "IPv4": "10.10.10.10",
+            "IPv6": "2001:db8::1"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Now, the derp server should be the only one in your tailnet.
+
 ## Know Issues and Possible Improvements
 
 - I’m using singbox’s built-in DNS, the performance is not measured. If it lags on your machine, you could layer mosdns on top.
@@ -252,3 +330,4 @@ Warning: Never add these iptables scripts to system boot, otherwise a miss-confi
 7. [Tailscale subnet routing guide](https://tailscale.com/kb/1019/subnets)
 8. [RFC 5735 (reserved IP ranges)](https://www.rfc-editor.org/rfc/rfc5735)
 9. [VMess to singbox config conversion tool](https://v2ray-to-sing-box.pages.dev/)
+10 [DERP servers](https://tailscale.com/kb/1118/custom-derp-servers)
