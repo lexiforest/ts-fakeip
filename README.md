@@ -23,169 +23,76 @@ Why do we combine them? Experienced users may have already set up FakeIP-based D
 
 ## Implementation Steps
 
-In my setup, I leveraged singbox’s built-in DNS (instead of the more popular mosdns). The overall architecture looks like this:
+In my setup, I leveraged Mihomo’s built-in DNS (instead of the more popular mosdns). The overall architecture looks like this:
 
-![Tailscale + Singbox](images/tailnet.png)
+![Tailscale + Mihomo](images/tailnet.png)
+
+**Note, we switched to mihomo recently**
+
+Tested on **Ubuntu 24.04 LTS** with **Mihomo** and **Tailscale 1.90+**.
 
 ### Step 1. Buy a VPS server
 
-Spin up a VPS server and join the tailnet. **NOTE**, allow all addresses to connect UDP in the security group.
+Spin up a VPS and join the tailnet. **NOTE**: allow inbound UDP from any address in the security group (Tailscale needs that for hole punching).
 
-### Step 2. Install Singbox
-
-Install and configure singbox on the VPS. The full config is [here](sing-box/config.json).
+Install Tailscale via the official one-liner, which sets up the apt repo and signing key:
 
 ```sh
-sudo vi /etc/sing-box/config.json    # see the configuration in sing-box/config.json
-sudo systemctl restart sing-box
-sudo journalctl -u sing-box | less   # check the logs to debug
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# Advertise the private IP range
+sudo tailscale set \
+  --advertise-routes=198.18.0.0/15 \
+  --accept-dns=false
 ```
 
-After configuration, first verify that the VPS can reach the blocked sites.
+`--accept-dns=false` is very important, it avoids tailscale from DNS loop, because the DNS server itself is the DNS.
 
-![Singbox setup OK](images/singbox-setup-ok.png)
+Then, approve the route in the Tailscale admin console.
 
-Then, check that the FakeIP DNS is working. You should see a FakeIP responses in the `198.18.0.0/15` range:
+### Step 2. Install Mihomo
 
-![FakeIP DNS OK](images/fakeip-ok.png)
-
-<details>
-
-<summary>
-Here are the key parts of my config.json with comments:
-</summary>
-
-```json
-{
-  "dns": {
-    "servers": [
-      // upstream DNS servers
-      {
-        "tag": "dns_proxy",
-        "address": "https://1.1.1.1/dns-query",
-        "address_resolver": "dns_resolver",
-        "strategy": "ipv4_only",
-        "detour": "overseas"  // access with the overseas outbound
-      },
-      ...
-      // fakeip dns server
-      {
-        "tag": "dns_fakeip",
-        "address": "fakeip"
-      }
-    ],
-    "rules": [
-      // fakeip dns config
-      {
-        "server": "dns_fakeip",
-        "rewrite_ttl": 1,
-        "query_type": [
-          "A",
-          "AAAA"
-        ]
-      }
-    ],
-    "strategy": "ipv4_only",
-    // fakeip IP range
-    "fakeip": {
-      "enabled": true,
-      "inet4_range": "198.18.0.0/15"
-    }
-  },
-  "inbounds": [
-    // Open proxy and dns server to LAN
-    {
-      "type": "tproxy",
-      "tag": "tproxy-in",
-      "listen": "::",
-      "listen_port": 7893,
-      "tcp_fast_open": true,
-      "udp_fragment": true,
-      "sniff": true
-    },
-    {
-      "type": "mixed",
-      "tag": "mixed-in",
-      "listen": "::",
-      "listen_port": 7890,
-      "tcp_fast_open": true,
-      "udp_fragment": true,
-      "sniff": true
-    },
-    {
-      "type": "direct",
-      "tag": "dns-in",
-      "listen": "::",
-      "listen_port": 1053
-    }
-  ],
-  // outbounds to access blocked sites, you can use vemss/sing-box conversion tools to generate these fields.
-  "outbounds": [
-    {
-      "tag": "overseas",
-      "type": "vmess",
-      "server": "",
-      "server_port": 0,
-      "uuid": "",
-      "security": "auto",
-      "alter_id": 0
-    }
-  ],
-  "route": {
-    "rules": [
-	  // geosite rules, which route all china traffic to DIRECT, i.e. using real IP.
-      {
-        "outbound": "DIRECT",
-        "type": "logical",
-        "mode": "and",
-        "rules": [
-          {
-            "rule_set": [
-              "geosite-geolocation-!cn"
-            ],
-            "invert": true
-          },
-          {
-            "rule_set": [
-              "geosite-cn",
-              "geosite-category-companies@cn",
-              "geoip-cn"
-            ]
-          }
-        ]
-      }
-    ],
-    // geosite rules found online
-    "rule_set": [
-      {
-        "type": "remote",
-        "tag": "geoip-cn",
-        "format": "binary",
-        "url": "https://cdn.jsdelivr.net/gh/SagerNet/sing-geoip@rule-set/geoip-cn.srs",
-        "download_detour": "overseas"
-      },
-	  ...
-    ],
-    "final": "overseas",
-    "auto_detect_interface": true
-  }
-}
-
-```
-</details>
-
-
-### Step 3. Update Remote DNS
-
-
-Change the sing-box DNS server to listen on port 53 instead of 1053. Update this line: `"listen_port": 1053`.
-
-Disable and stop `systemd-resolved`, then reboot to ensure caches are cleared:
+Install Mihomo from the official GitHub release page
 
 ```sh
-sudo systemctl stop systemd-resolved
-sudo systemctl disable systemd-resolved
-sudo reboot
+curl -O -L https://github.com/MetaCubeX/mihomo/releases/download/v1.19.25/mihomo-linux-amd64-v1.19.25.gz
+gunzip mihomo-linux-amd64-v1.19.25.gz
+chmod +x mihomo-linux-amd64-v1.19.25
+mv mihomo-linux-amd64-v1.19.25 /usr/local/bin/mihomo
+```
+
+Copy config and enable daemon
+
+```
+mkdir /etc/mihomo
+cp mihomo/config.yaml /etc/mihomo
+cp mihomo/mihomo.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now mihomo
+```
+
+Verify that it's indeed mihomo listening to 53 port
+
+```
+sudo ss -lntup | grep ':53'
+sudo ss -lnuup | grep ':53'
+ip addr | grep -A3 mihomo
+ip route | grep 198.18
+```
+
+Stop `systemd-resolved` if needed.
+
+
+### Step 3. Open DNS to tailnet
+
+```
+sudo ufw allow in on tailscale0 proto udp to any port 53
+sudo ufw allow in on tailscale0 proto tcp to any port 53
+
+# Do not open 53 to the public internet
+sudo ufw deny in proto udp to any port 53
+sudo ufw deny in proto tcp to any port 53
 ```
 
 ### Step 4. Update Tailscale DNS
@@ -198,55 +105,61 @@ Join the tailnet from your local machine and verify:
 
 ![Local DNS](images/local-dns.png)
 
-You should now load domestic sites normally, while blocked sites, e.g. Google/Facebook are note accessible, because of FakeIPs not being routed.
 
-### Step 5. Enable routing of the FakeIP subnet
+### Step 5. Accept the subroutes and DNS
 
-On the VPS:
-
-```sh
-sudo tailscale set --advertise-routes=198.18.0.0/15
-```
-
-Then approve the route in the Tailscale admin console.
-
-Enable IP forwarding:
+On Linux clients:
 
 ```sh
-echo 'net.ipv4.ip_forward = 1' | sudo tee -a /etc/sysctl.d/99-tailscale.conf
-echo 'net.ipv6.conf.all.forwarding = 1' | sudo tee -a /etc/sysctl.d/99-tailscale.conf
-sudo sysctl -p /etc/sysctl.d/99-tailscale.conf
+sudo tailscale set --accept-dns=true --accept-routes=true
 ```
 
-Add two iptables scripts (setup.sh and unset.sh) under `/etc/sing-box/` to forward traffic for `198.18.0.0/15` into your tproxy port. Remember to make them executable.
+On other clients: Use the GUI config.
 
-You can find the two scripts in [sing-box](sing-box).
+Verify:
 
-Finally, hook these into the `/lib/systemd/system/sing-box.service` unit file so they run on start/stop:
-
-```ini
-[Service]
-ExecStartPre  = +/usr/bin/bash /etc/sing-box/unset.sh
-ExecStartPost = +/usr/bin/bash /etc/sing-box/setup.sh
-ExecStopPost  = +/usr/bin/bash /etc/sing-box/unset.sh
+```
+nslookup google.com  -> 198.18.0.x
 ```
 
-Warning: Never add these iptables scripts to system boot, otherwise a miss-config could trap you into a reboot loop.
+```
+nslookup google.cn -> real_ip
+```
 
 ### (Optional) Step 6. Set up a DERP server
 
 Tailscale uses DERP server for hole-punching and traffic-relaying when a direct connect between two peers is not possible.
 However, the DERP server may be too slow or blocked in your region. To overcome this, you can setup you own DERP servers.
 
-On a new host, let's say: `derp.example.com(10.10.10.10)`
+On a new host, let's say: `derp.example.com(10.10.10.10)`. You'll need a public-facing 443 port (derper uses Let's Encrypt by default for its TLS cert) and a real DNS A/AAAA record for `derp.example.com`.
 
 ```sh
+sudo apt install -y golang   # 1.22+ on noble; or download a tarball from go.dev
+# If golang's module proxy is blocked from your VPS, point it at a mirror first:
+go env -w GOPROXY=https://goproxy.cn,direct
+
 go install tailscale.com/cmd/derper@latest
+sudo install -m 0755 ~/go/bin/derper /usr/local/bin/derper
 
-# If golang is blocked, set this:
-go env -w  GOPROXY=https://goproxy.io,direct
+# Run it as a systemd service rather than from a shell:
+sudo tee /etc/systemd/system/derper.service >/dev/null <<'EOF'
+[Unit]
+Description=Tailscale DERP relay
+After=network-online.target
+Wants=network-online.target
 
-sudo derper --hostname=derp.example.com
+[Service]
+ExecStart=/usr/local/bin/derper --hostname=derp.example.com --certmode=letsencrypt --certdir=/var/lib/derper
+Restart=on-failure
+DynamicUser=yes
+StateDirectory=derper
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now derper
 ```
 
 Edit the ACL file on tailscale.com
@@ -311,13 +224,13 @@ Edit the ACL file on tailscale.com
 
 Now, the derp server should be the only one in your tailnet.
 
-## Know Issues and Possible Improvements
+## Known Issues and Possible Improvements
 
-- I’m using singbox’s built-in DNS, the performance is not measured. If it lags on your machine, you could layer mosdns on top.
-- All overseas bandwidth goes through your VPS, so you’re limited by its bandwidth. Luckily, I’m on a Tencent Cloud 200 Mbps unlimited plan for CNY 45/mo, which is acceptable for me. 
-- Apps like Telegram that use hardcoded IPs need special handling, fortunately, Telegram supports SOCKS proxy, and my config enables a SOCKS inbound.
-- When switching between networks, there is a noticible lag, you may need to turn tailscale off and on again.
-- We can use AdGuard as an upstream server to block ads.
+- All overseas bandwidth goes through your VPS, so you’re bandwidth-limited by it. I’m on a Tencent Cloud 200 Mbps unlimited plan for CNY 45/mo, which is fine for me.
+- Apps like Telegram that hardcode IPs need special handling — Telegram supports SOCKS so the `mixed-in` inbound on `:7890` works for it.
+- When switching networks there's a noticeable lag; toggling Tailscale off/on usually fixes it.
+- You can chain AdGuard Home as an upstream resolver to block ads.
+- IPv6 isn't routed through FakeIP here — only `inet4_range` is set. Add `inet6_range` and a v6 nftables chain if you want symmetric v6 coverage.
 
 ## References
 

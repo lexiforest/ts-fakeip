@@ -1,0 +1,80 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+external-controller: 127.0.0.1:9090
+
+tun:
+  enable: true
+  stack: mixed
+  device: mihomo
+  auto-route: true
+  auto-redirect: true
+  auto-detect-interface: true
+  strict-route: false
+
+  # 关键：只把 fake-ip 网段导入 Mihomo TUN
+  route-address:
+    - 198.18.0.0/15
+
+dns:
+  enable: true
+
+  # 监听所有地址，之后用防火墙限制只能从 tailscale0 访问
+  listen: 0.0.0.0:53
+
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.0/15
+
+  # 关键：用 rule 模式决定哪些域名返回 fake-ip，哪些返回 real-ip
+  fake-ip-filter-mode: rule
+  fake-ip-filter:
+    # Tailscale / 内网 / 本地域名不要 fake
+    - DOMAIN-SUFFIX,ts.net,real-ip
+    - DOMAIN-SUFFIX,lan,real-ip
+    - DOMAIN-SUFFIX,local,real-ip
+    - GEOSITE,private,real-ip
+
+    # 中国域名返回真实 IP，让客户端本地直连
+    - GEOSITE,cn,real-ip
+
+    # 其他域名返回 fake IP，经 198.18.0.0/15 进入 Tailscale → 日本 VPS
+    - MATCH,fake-ip
+
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+
+  nameserver-policy:
+    "geosite:cn":
+      - https://223.5.5.5/dns-query
+      - https://doh.pub/dns-query
+    "+.ts.net":
+      - 100.100.100.100
+    "*.ts.net":
+      - 100.100.100.100
+
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+
+rules:
+  # Tailscale / 内网
+  - DOMAIN-SUFFIX,ts.net,DIRECT
+  - GEOSITE,private,DIRECT
+  - GEOIP,private,DIRECT,no-resolve
+
+  # 中国网站，如果误入 Mihomo，也从日本服务器 DIRECT；
+  # 但正常情况下它们在 DNS 阶段已经 real-ip，客户端会本地直连。
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT,no-resolve
+
+  # 其他所有 fake-ip 流量，从日本 VPS 直接出站
+  - MATCH,DIRECT
