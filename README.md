@@ -1,4 +1,4 @@
-# Tailscale + Singbox FakeIP = Seamless VPN access
+# Tailscale + Mihomo FakeIP = Seamless VPN access
 
 Recently I needed to connect my home Mac mini to GitHub as a runner. Unfornately, GitHub access is not stable in my country, so I need a seamless VPN solution. Previously I was using OpenClash, but never quite got it configured right, so this was the perfect opportunity to solve that too.
 
@@ -53,6 +53,26 @@ Then, approve the route in the Tailscale admin console.
 
 ### Step 2. Install Mihomo
 
+Stop systemd-resolved first
+
+```
+# 1. Stop and disable systemd-resolved
+sudo systemctl disable --now systemd-resolved.service
+
+# Optional, only if something keeps restarting it:
+# sudo systemctl mask systemd-resolved.service
+
+# 2. Replace the systemd-resolved resolv.conf symlink
+ls -l /etc/resolv.conf
+sudo rm -f /etc/resolv.conf
+
+# 3. Create a normal static resolv.conf
+cat <<'EOF' | sudo tee /etc/resolv.conf
+nameserver 223.5.5.5
+nameserver 223.6.6.6
+EOF
+```
+
 Install Mihomo from the official GitHub release page
 
 ```sh
@@ -60,6 +80,31 @@ curl -O -L https://github.com/MetaCubeX/mihomo/releases/download/v1.19.25/mihomo
 gunzip mihomo-linux-amd64-v1.19.25.gz
 chmod +x mihomo-linux-amd64-v1.19.25
 mv mihomo-linux-amd64-v1.19.25 /usr/local/bin/mihomo
+```
+
+Download geosite and upload:
+
+```sh
+mkdir -p mihomo-geo
+cd mihomo-geo
+
+curl -L -o geosite.dat \
+  https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat
+
+curl -L -o geoip-lite.dat \
+  https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat
+
+curl -L -o country-lite.mmdb \
+  https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country-lite.mmdb
+
+scp geosite.dat geoip-lite.dat country-lite.mmdb root@YOUR_CHINA_VPS:/etc/mihomo/
+```
+
+On the VPS:
+
+```sh
+sudo chown root:root /etc/mihomo/geosite.dat /etc/mihomo/geoip-lite.dat /etc/mihomo/country-lite.mmdb
+sudo chmod 644 /etc/mihomo/geosite.dat /etc/mihomo/geoip-lite.dat /etc/mihomo/country-lite.mmdb
 ```
 
 Copy config and enable daemon
