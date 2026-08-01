@@ -1,12 +1,11 @@
 mixed-port: 7890
 allow-lan: true
-bind-address: 100.x.y.z   # 改成 VPS 的 Tailscale IP
-mode: rule
+bind-address: 100.x.y.z   # Set to the VPS's Tailscale IP
 mode: rule
 log-level: info
-ipv6: false
+ipv6: true
 geodata-mode: true
-geo-auto-update: false  # 手动上传
+geo-auto-update: false  # Upload manually
 geox-url:
   geoip: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat"
   geosite: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat"
@@ -16,7 +15,10 @@ profile:
   store-selected: true
   store-fake-ip: true
 
-external-controller: 127.0.0.1:9090
+external-controller: 100.x.y.z:9090   # Set to the VPS's Tailscale IP; use a firewall to allow tailscale0 only
+secret: "CHANGE-ME-long-random-string"  # Required when not listening on localhost only
+external-ui: ui                          # mihomo extracts the dashboard into this directory
+external-ui-url: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"
 
 tun:
   enable: true
@@ -27,33 +29,33 @@ tun:
   auto-detect-interface: true
   strict-route: false
 
-  # 关键：只把 fake-ip 网段导入 Mihomo TUN
+  # Key: only route the fake-ip subnet into the Mihomo TUN
   route-address:
     - 198.18.0.0/15
 
 dns:
   enable: true
 
-  # 监听所有地址，之后用防火墙限制只能从 tailscale0 访问
+  # Listen on all addresses, then use a firewall to restrict access to tailscale0 only
   listen: 0.0.0.0:53
 
   ipv6: false
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.0/15
 
-  # 关键：用 rule 模式决定哪些域名返回 fake-ip，哪些返回 real-ip
+  # Key: use rule mode to decide which domains return fake-ip vs real-ip
   fake-ip-filter-mode: rule
   fake-ip-filter:
-    # Tailscale / 内网 / 本地域名不要 fake
+    # Do not fake Tailscale / intranet / local domains
     - DOMAIN-SUFFIX,ts.net,real-ip
     - DOMAIN-SUFFIX,lan,real-ip
     - DOMAIN-SUFFIX,local,real-ip
     - GEOSITE,private,real-ip
 
-    # 中国域名返回真实 IP，让客户端本地直连
+    # China domains return real IPs so clients connect directly
     - GEOSITE,cn,real-ip
 
-    # 其他域名返回 fake IP，经 198.18.0.0/15 进入 Tailscale → 日本 VPS
+    # Other domains return fake IPs, entering Tailscale via 198.18.0.0/15 → Japan VPS
     - MATCH,fake-ip
 
   default-nameserver:
@@ -82,32 +84,55 @@ dns:
 proxies:
   - name: "vmess-main"
     type: vmess
-    server: 
+    server:
     port: 13601
-    uuid: 
+    uuid:
     alterId: 0
     cipher: auto
     udp: false
     tls: false
     servername: jms
 
+  # Self-hosted VMess exit: VMess over WebSocket, TLS terminated by Caddy on :443.
+  # Fill in the blanks on your deployed copy (do not commit real values to this public repo).
+  # uuid/path must match server-config.yaml and Caddyfile on the overseas VPS.
+  - name: "vmess-selfhost"
+    type: vmess
+    server:                 # your overseas VPS domain, e.g. your.domain.com
+    port: 443
+    uuid:
+    alterId: 0
+    cipher: auto
+    udp: true               # relay UDP (QUIC/DNS/etc.); tunneled inside the WS/TLS stream
+    packet-encoding: xudp   # full-cone NAT; both ends are mihomo so xudp is supported
+    tls: true
+    servername:             # same domain as `server`
+    network: ws
+    ws-opts:
+      path:                 # a secret path, e.g. /f3a9c1e0d7b2 ; same path as server ws-path + Caddy
+      headers:
+        Host:               # same domain as `server`
+
 proxy-groups:
+  # Pick this group on the dashboard's Proxies page to switch upstreams (store-selected remembers the choice).
+  # vmess-main = JMS, vmess-selfhost = your own exit.
   - name: PROXY
     type: select
     proxies:
       - vmess-main
+      - vmess-selfhost
       - DIRECT
 
 rules:
-  # Tailscale / 内网
+  # Tailscale / intranet
   - DOMAIN-SUFFIX,ts.net,DIRECT
   - GEOSITE,private,DIRECT
   - GEOIP,private,DIRECT,no-resolve
 
-  # 中国网站，如果误入 Mihomo，也从日本服务器 DIRECT；
-  # 但正常情况下它们在 DNS 阶段已经 real-ip，客户端会本地直连。
+  # China sites: if they reach Mihomo by mistake, still go DIRECT from the Japan server;
+  # normally they already resolve to real-ip at the DNS stage, so clients connect directly.
   - GEOSITE,cn,DIRECT
   - GEOIP,CN,DIRECT,no-resolve
 
-  # 其他所有 fake-ip 流量，走 proxy
+  # All other fake-ip traffic goes through the proxy
   - MATCH,PROXY

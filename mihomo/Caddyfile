@@ -1,0 +1,18 @@
+# Caddyfile — runs on the OVERSEAS VPS. Deploy to /etc/caddy/Caddyfile.
+# Caddy auto-obtains and renews a Let's Encrypt cert. Fill in the placeholders below;
+# do not commit real values to this public repo.
+# Requirements: a DNS A/AAAA record for your domain -> this VPS, and ports 80 + 443 open.
+
+# Replace with your overseas VPS domain (same as the client's `server`/`servername`).
+your.domain.com {
+	# Secret WebSocket path -> plain VMess listener mihomo runs on localhost.
+	# Replace /REPLACE_WITH_YOUR_PATH; must match ws-path in server-config.yaml and the
+	# client's ws-opts.path (a secret path, e.g. /f3a9c1e0d7b2).
+	@vmess path /REPLACE_WITH_YOUR_PATH
+	reverse_proxy @vmess 127.0.0.1:10000
+
+	# Decoy: every other request looks like an ordinary website to a prober/GFW.
+	handle {
+		respond "It works!" 200
+	}
+}

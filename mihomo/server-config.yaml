@@ -1,0 +1,30 @@
+# Mihomo VMess server config — runs on the OVERSEAS VPS (the exit node).
+# Deploy to /etc/mihomo/config.yaml on the overseas VPS (same mihomo.service as the client).
+# Fill in the blanks on the deployed copy; do not commit real values to this public repo.
+# uuid/ws-path must match Caddyfile and the client's vmess-selfhost proxy in config.yaml.
+
+mode: rule
+log-level: info
+ipv6: true
+
+# No outbound proxy needed — this box IS the exit.
+# No mixed-port / TUN / DNS: this instance only terminates the VMess inbound.
+
+listeners:
+  - name: vmess-ws-in
+    type: vmess
+    listen: 127.0.0.1   # only Caddy (same host) may reach it; TLS is terminated by Caddy
+    port: 10000
+    users:
+      - username: main
+        uuid:           # same uuid as the client's vmess-selfhost proxy
+        alterId: 0
+    ws-path:            # a secret path, e.g. /f3a9c1e0d7b2 ; same path as Caddy + client ws-opts.path
+    # UDP: no option needed here — the vmess inbound relays UDP automatically (incl. xudp)
+    # when the client sets `udp: true`. It's tunneled inside the WS stream, so Caddy and the
+    # firewall are unaffected (still only 443/TCP is exposed).
+
+rules:
+  # Everything decoded from the tunnel exits directly to the Internet from this VPS.
+  # DIRECT handles both TCP and UDP, so UDP flows exit here too.
+  - MATCH,DIRECT

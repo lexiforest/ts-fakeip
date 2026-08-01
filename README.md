@@ -269,6 +269,84 @@ Edit the ACL file on tailscale.com
 
 Now, the derp server should be the only one in your tailnet.
 
+### (Optional) Step 7. Self-host the overseas VMess exit
+
+By default `PROXY` forwards overseas traffic to a commercial provider (e.g. JMS). If you'd
+rather run your own exit, host a VMess server on an overseas VPS. Mihomo has a built-in
+server side (`listeners:`), so the same binary is both client and server — no Xray/sing-box
+needed. Caddy terminates TLS on `:443` (auto Let's Encrypt + a decoy site for camouflage)
+and reverse-proxies a secret WebSocket path to a plain Mihomo VMess listener on localhost:
+
+```
+DNS VPS (mihomo client)                overseas VPS
+  PROXY -> vmess-selfhost  --vmess+ws+tls-->  Caddy :443 (cert + decoy)
+                                                 └─/secret-path─> mihomo vmess listener :10000
+                                                                     └─ MATCH,DIRECT ─> Internet
+```
+
+The committed configs ship with blank credential fields — fill them in on your deployed
+copies and don't commit the real values (this is a public repo). The three files that must
+agree: the `vmess-selfhost` proxy in `config.yaml`, `server-config.yaml`, and `Caddyfile`.
+
+**1. Generate credentials.** Point a DNS A/AAAA record `your.domain.com` at the overseas
+VPS and open TCP 80 + 443.
+
+```sh
+uuidgen | tr 'A-Z' 'a-z'                 # -> your uuid
+echo /$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-12)   # -> your ws path
+```
+
+Fill these into the blanks:
+- `config.yaml` → `vmess-selfhost`: `server`/`servername`/`Host` = your domain, plus `uuid` and `ws-opts.path`.
+- `server-config.yaml` → listener `uuid` and `ws-path` (must match the client).
+- `Caddyfile` → the domain and the `@vmess path` (must match the client's path).
+
+**2. Deploy the server on the overseas VPS** (install mihomo as in Step 2, then):
+
+```sh
+scp mihomo/server-config.yaml root@OVERSEAS_VPS:/etc/mihomo/config.yaml
+scp mihomo/mihomo.service      root@OVERSEAS_VPS:/etc/systemd/system/
+ssh root@OVERSEAS_VPS 'systemctl daemon-reload && systemctl enable --now mihomo'
+```
+
+**3. Deploy Caddy on the overseas VPS:**
+
+```sh
+# install caddy (Debian/Ubuntu)
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update && sudo apt install -y caddy
+
+scp mihomo/Caddyfile root@OVERSEAS_VPS:/etc/caddy/Caddyfile
+ssh root@OVERSEAS_VPS 'systemctl reload caddy'   # obtains the cert on first load
+```
+
+**4. Update the mainland client** with your filled-in `config.yaml`:
+
+```sh
+scp mihomo/config.yaml root@MAINLAND_VPS:/etc/mihomo/config.yaml
+ssh root@MAINLAND_VPS 'systemctl restart mihomo'
+```
+
+Then open the dashboard (Step 2's `external-ui`), go to **Proxies → PROXY**, and switch
+between `vmess-main` (JMS) and `vmess-selfhost`.
+
+**Verify:**
+
+```sh
+# on the overseas VPS: mihomo on localhost:10000, caddy on :443
+sudo ss -lntp | grep -E ':10000|:443'
+# from anywhere: the decoy proves TLS works
+curl https://your.domain.com/        # -> "It works!"
+```
+
+> Note: the `vmess-selfhost` proxy sets `udp: true`, so UDP (QUIC/DNS/games) is relayed
+> through the exit. VMess encapsulates UDP inside the VMess stream, so it rides the same
+> WS/TLS connection — no extra UDP port on Caddy or in the firewall; only 443/TCP is
+> exposed. `packet-encoding: xudp` gives full-cone NAT (both ends are mihomo). The JMS
+> `vmess-main` keeps `udp: false` (plain-TCP JMS doesn't relay UDP).
+
 ## Known Issues and Possible Improvements
 
 - All overseas bandwidth goes through your VPS, so you’re bandwidth-limited by it. I’m on a Tencent Cloud 200 Mbps unlimited plan for CNY 45/mo, which is fine for me.
