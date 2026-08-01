@@ -128,6 +128,35 @@ ip route | grep 198.18
 
 Stop `systemd-resolved` if needed.
 
+#### Enable BBR
+
+BBR can significantly improve throughput on high-latency or lossy routes. Check that the
+kernel supports it:
+
+```sh
+sysctl net.ipv4.tcp_available_congestion_control
+```
+
+If the output includes `bbr`, enable it persistently:
+
+```sh
+sudo tee /etc/sysctl.d/99-bbr.conf >/dev/null <<'EOF'
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+sudo sysctl --system
+```
+
+Verify that it is active:
+
+```sh
+sysctl net.ipv4.tcp_congestion_control
+sysctl net.core.default_qdisc
+```
+
+The values should be `bbr` and `fq`. Apply this on the mainland VPS and, when using the
+self-hosted VMess exit, on the overseas VPS as well.
+
 
 ### Step 3. Open DNS to tailnet
 
